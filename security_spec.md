@@ -1,27 +1,25 @@
-# Security Specification — Stokbar Cupim (Firestore)
+# Stokbar Cupim — Shared Workspace Security Specification (Phase 0)
 
 ## 1. Data Invariants
-1. Every document under `/users/{userId}/beverages/{beverageId}`, `/users/{userId}/meta/{metaId}`, and `/users/{userId}/shifts/{shiftId}` MUST belong strictly to `request.auth.uid == userId` AND have `ownerId == request.auth.uid`.
-2. Every write operation requires a verified authenticated user (`request.auth != null && request.auth.token.email_verified == true`).
-3. Document IDs (`userId`, `beverageId`, `metaId`, `shiftId`) MUST match `^[a-zA-Z0-9_\-]+$` with length <= 128 on single-document operations (`get`, `create`, `update`, `delete`).
-4. `Beverage.categoria` MUST belong to the strict allowlist: `['Cerveja', 'Refrigerante', 'Água', 'Suco', 'Destilado', 'Vinho', 'Outros']`.
-5. Numeric stock fields (`inicial`, `final`, `ideal`) MUST be either `null` or a non-negative number (`>= 0 && <= 100000`).
-6. `ShiftMeta.dataOperacional` and `ShiftRecord.dataOperacional` MUST match `^[0-9]{4}-[0-9]{2}-[0-9]{2}$` (length 10).
-7. `ShiftRecord` documents are immutable after creation (no `update` allowed; only `create`, `get`, `list`, `delete` by owner).
-8. `ShiftRecord.itens` array MUST be strictly bounded (`size() <= 200`) and validate the first element type if non-empty.
-9. `createdAt` and `ownerId` are immutable after creation; `createdAt == request.time` on create and `updatedAt == request.time` on create/update.
-10. No PII (email, phone, address) is stored in Firestore collections.
+1. **Default-Deny Safety Net**: Every unmatched Firestore path is denied (`match /{document=**} { allow read, write: if false; }`).
+2. **Single Hardened Workspace (`estacao-cupim`)**: Only `workspaceId == 'estacao-cupim'` is accepted on `/workspaces/{workspaceId}/...`.
+3. **Verified Identity Only**: Every authenticated read/write requires `request.auth != null && request.auth.token.email_verified == true && request.auth.token.email != null`.
+4. **Team Membership Master Gate**: Access to `beverages`, `meta`, and `shifts` is strictly limited to the bootstrap administrator (`skalee.razarth@gmail.com`) or users whose lowercase verified email exists in `/workspaces/estacao-cupim/members/{email}`.
+5. **PII Isolation on Team Roster**: `/workspaces/estacao-cupim/members/{memberEmail}` restricts `list`, `create`, `update`, and `delete` strictly to workspace admins. Individual non-admin users may only `get` their own document (`request.auth.token.email.lower() == memberEmail`) to verify authorization.
+6. **Privilege Escalation Prevention**: Non-admin users cannot create, update, or promote themselves in `/members`; the bootstrap admin (`skalee.razarth@gmail.com`) cannot be deleted or demoted.
+7. **Strict Validation & Server Timestamps**: Every document write validates exact keys (`hasAll` + `hasOnly`), field types, string/list bounds, `updatedByUid == request.auth.uid`, immutable `workspaceId`/`createdByUid`/`createdAt`, and `request.time` server timestamps.
+8. **Immutable Shift History & Tiered Deletion**: Closed `shifts` cannot be updated (`allow update: if false`) and can only be deleted by workspace admins.
 
-## 2. The "Dirty Dozen" Adversarial Payloads (Must All Return PERMISSION_DENIED)
-1. **Unauthenticated Read**: `GET /users/uid1/beverages/bev1` with `auth == null`.
-2. **Cross-Tenant Read**: `GET /users/uidA/beverages/bev1` authenticated as `uidB`.
-3. **Unverified Email Write**: `CREATE /users/uid1/beverages/bev1` with `email_verified: false`.
-4. **Identity Spoofing on Create**: `CREATE /users/uid1/beverages/bev1` with `{ ownerId: "uid2", ... }`.
-5. **Shadow Ghost Field Injection**: `CREATE /users/uid1/beverages/bev1` with extra key `isAdmin: true`.
-6. **ID Poisoning**: `CREATE /users/uid1/beverages/${"a".repeat(200)}` (length > 128).
-7. **Invalid Category Enum**: `CREATE /users/uid1/beverages/bev1` with `categoria: "Combustível"`.
-8. **Negative / Overflow Stock Value**: `UPDATE /users/uid1/beverages/bev1` with `final: -5` or `final: 9999999`.
-9. **Owner Hijack on Update**: `UPDATE /users/uid1/beverages/bev1` attempting to mutate `ownerId` or `createdAt`.
-10. **Forged Client Timestamp**: `CREATE /users/uid1/beverages/bev1` with `createdAt: "2020-01-01T00:00:00Z"` instead of server `request.time`.
-11. **Mutating Immutable Shift History**: `UPDATE /users/uid1/shifts/shift1` attempting to tamper with `totalConsumo`.
-12. **Unbounded Array / Invalid Date Format**: `CREATE /users/uid1/shifts/shift1` with `dataOperacional: "hoje"` or `itens.size() > 200`.
+## 2. The "Dirty Dozen" Adversarial Payloads (Must All Return `PERMISSION_DENIED`)
+1. **Unauthenticated Read**: `GET /workspaces/estacao-cupim/beverages/b1` without `request.auth`.
+2. **Unverified Admin Email Spoof**: `GET /workspaces/estacao-cupim/members/a@b.com` with `email: "skalee.razarth@gmail.com"` and `email_verified: false`.
+3. **Unauthorized Outsider Read**: `LIST /workspaces/estacao-cupim/beverages` by verified user `outsider@example.com` not listed in `/members`.
+4. **Self-Promotion to Team/Admin**: `CREATE /workspaces/estacao-cupim/members/outsider@example.com` with `{"role": "admin"}` by `outsider@example.com`.
+5. **PII Roster Scraping by Operator**: `LIST /workspaces/estacao-cupim/members` or `GET /workspaces/estacao-cupim/members/other@example.com` by role `operador`.
+6. **Shadow Field Injection on Beverage**: `CREATE /workspaces/estacao-cupim/beverages/b1` including ghost field `"isAdmin": true`.
+7. **Value Poisoning on Update**: `UPDATE /workspaces/estacao-cupim/beverages/b1` setting `inicial: "9999999"` (string instead of number) or `inicial: -5`.
+8. **Identity Spoofing on Audit Trail**: `UPDATE /workspaces/estacao-cupim/beverages/b1` setting `updatedByUid: "another-uid"` (`!= request.auth.uid`).
+9. **Immutable Field Tampering**: `UPDATE /workspaces/estacao-cupim/beverages/b1` altering `createdByUid` or `createdAt` or `workspaceId`.
+10. **Client Timestamp Forgery**: `CREATE /workspaces/estacao-cupim/beverages/b1` passing backdated `createdAt` instead of `request.time`.
+11. **Operator Deleting Closed Shift History**: `DELETE /workspaces/estacao-cupim/shifts/s1` by role `operador` (only `admin` allowed).
+12. **Resource Poisoning / Invalid Path ID**: `CREATE /workspaces/estacao-cupim/beverages/bad$id` or `nome` > 120 chars or `shifts.itens` > 200 items.

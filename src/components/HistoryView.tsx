@@ -12,6 +12,7 @@ import {
 interface HistoryViewProps {
   currentItems: BeverageItem[];
   history: ShiftRecord[];
+  canDeleteShift?: boolean;
   onOpenNewShift: () => void;
   onExportShiftPdf: (record: ShiftRecord) => void;
   onDeleteShift: (id: string) => void;
@@ -20,6 +21,7 @@ interface HistoryViewProps {
 export function HistoryView({
   currentItems,
   history,
+  canDeleteShift = true,
   onOpenNewShift,
   onExportShiftPdf,
   onDeleteShift,
@@ -280,15 +282,17 @@ export function HistoryView({
                         >
                           <FileDown className="w-4 h-4" />
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteShift(record.id)}
-                          aria-label={`Excluir ${record.rotulo}`}
-                          title="Excluir registro"
-                          className="min-w-[40px] min-h-[40px] inline-flex items-center justify-center rounded-lg text-[#A69D8E] hover:text-[#E05A47] hover:bg-[#E05A47]/10 transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {canDeleteShift && (
+                          <button
+                            type="button"
+                            onClick={() => onDeleteShift(record.id)}
+                            aria-label={`Excluir ${record.rotulo}`}
+                            title="Excluir registro"
+                            className="min-w-[40px] min-h-[40px] inline-flex items-center justify-center rounded-lg text-[#A69D8E] hover:text-[#E05A47] hover:bg-[#E05A47]/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setExpandedId(isOpen ? null : record.id)}

@@ -13,11 +13,30 @@ service cloud.firestore {
     }
 
     function isVerifiedUser() {
-      return isSignedIn() && request.auth.token.email_verified == true;
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.size() >= 5
+        && request.auth.token.email.size() <= 128;
+    }
+
+    function authEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isValidWorkspaceId(workspaceId) {
+      return workspaceId == 'estacao-cupim';
     }
 
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidEmailId(emailId) {
+      return emailId is string
+        && emailId.size() >= 5
+        && emailId.size() <= 128
+        && emailId.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$');
     }
 
     function incoming() {
@@ -28,8 +47,31 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isOwner(userId) {
-      return isVerifiedUser() && request.auth.uid == userId;
+    function isBootstrapAdmin() {
+      return isVerifiedUser() && authEmail() == 'skalee.razarth@gmail.com';
+    }
+
+    function memberDocPath(workspaceId, emailId) {
+      return /databases/$(database)/documents/workspaces/$(workspaceId)/members/$(emailId);
+    }
+
+    function isWorkspaceAdmin(workspaceId) {
+      return isBootstrapAdmin()
+        || (
+          isVerifiedUser()
+          && isValidWorkspaceId(workspaceId)
+          && exists(memberDocPath(workspaceId, authEmail()))
+          && get(memberDocPath(workspaceId, authEmail())).data.role == 'admin'
+        );
+    }
+
+    function isTeamMember(workspaceId) {
+      return isBootstrapAdmin()
+        || (
+          isVerifiedUser()
+          && isValidWorkspaceId(workspaceId)
+          && exists(memberDocPath(workspaceId, authEmail()))
+        );
     }
 
     function isValidNullableStock(val) {
@@ -48,9 +90,47 @@ service cloud.firestore {
     }
 
     // --- Validation Blueprints (Anti-Update-Gap) ---
-    function isValidBeverage(data, userId) {
+    function isValidTeamMember(data, workspaceId, memberEmail) {
       return data.keys().hasAll([
-          'ownerId',
+          'workspaceId',
+          'email',
+          'nome',
+          'role',
+          'addedByUid',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'workspaceId',
+          'email',
+          'nome',
+          'role',
+          'addedByUid',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.workspaceId == workspaceId
+        && isValidWorkspaceId(data.workspaceId)
+        && isValidEmailId(data.email)
+        && data.email == memberEmail
+        && data.nome is string
+        && data.nome.size() >= 1
+        && data.nome.size() <= 80
+        && data.role is string
+        && data.role in ['admin', 'operador']
+        && data.addedByUid is string
+        && isValidId(data.addedByUid)
+        && data.addedByUid == request.auth.uid
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBeverage(data, workspaceId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'createdByUid',
+          'updatedByUid',
+          'updatedByName',
           'nome',
           'categoria',
           'inicial',
@@ -62,7 +142,10 @@ service cloud.firestore {
           'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId',
+          'workspaceId',
+          'createdByUid',
+          'updatedByUid',
+          'updatedByName',
           'nome',
           'categoria',
           'inicial',
@@ -73,10 +156,16 @@ service cloud.firestore {
           'createdAt',
           'updatedAt'
         ])
-        && data.ownerId is string
-        && isValidId(data.ownerId)
-        && data.ownerId == userId
-        && data.ownerId == request.auth.uid
+        && data.workspaceId == workspaceId
+        && isValidWorkspaceId(data.workspaceId)
+        && data.createdByUid is string
+        && isValidId(data.createdByUid)
+        && data.updatedByUid is string
+        && isValidId(data.updatedByUid)
+        && data.updatedByUid == request.auth.uid
+        && data.updatedByName is string
+        && data.updatedByName.size() >= 1
+        && data.updatedByName.size() <= 80
         && data.nome is string
         && data.nome.size() >= 1
         && data.nome.size() <= 120
@@ -90,36 +179,46 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    function isValidShiftMeta(data, userId) {
+    function isValidShiftMeta(data, workspaceId) {
       return data.keys().hasAll([
-          'ownerId',
+          'workspaceId',
           'dataOperacional',
           'abertoEm',
+          'updatedByUid',
+          'updatedByName',
           'createdAt',
           'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId',
+          'workspaceId',
           'dataOperacional',
           'abertoEm',
+          'updatedByUid',
+          'updatedByName',
           'createdAt',
           'updatedAt'
         ])
-        && data.ownerId is string
-        && isValidId(data.ownerId)
-        && data.ownerId == userId
-        && data.ownerId == request.auth.uid
+        && data.workspaceId == workspaceId
+        && isValidWorkspaceId(data.workspaceId)
         && isValidDateISO(data.dataOperacional)
         && data.abertoEm is string
         && data.abertoEm.size() >= 10
         && data.abertoEm.size() <= 40
+        && data.updatedByUid is string
+        && isValidId(data.updatedByUid)
+        && data.updatedByUid == request.auth.uid
+        && data.updatedByName is string
+        && data.updatedByName.size() >= 1
+        && data.updatedByName.size() <= 80
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
-    function isValidShiftRecord(data, userId) {
+    function isValidShiftRecord(data, workspaceId) {
       return data.keys().hasAll([
-          'ownerId',
+          'workspaceId',
+          'createdByUid',
+          'closedByName',
           'dataOperacional',
           'abertoEm',
           'encerradoEm',
@@ -133,7 +232,9 @@ service cloud.firestore {
           'createdAt'
         ])
         && data.keys().hasOnly([
-          'ownerId',
+          'workspaceId',
+          'createdByUid',
+          'closedByName',
           'dataOperacional',
           'abertoEm',
           'encerradoEm',
@@ -146,10 +247,14 @@ service cloud.firestore {
           'itens',
           'createdAt'
         ])
-        && data.ownerId is string
-        && isValidId(data.ownerId)
-        && data.ownerId == userId
-        && data.ownerId == request.auth.uid
+        && data.workspaceId == workspaceId
+        && isValidWorkspaceId(data.workspaceId)
+        && data.createdByUid is string
+        && isValidId(data.createdByUid)
+        && data.createdByUid == request.auth.uid
+        && data.closedByName is string
+        && data.closedByName.size() >= 1
+        && data.closedByName.size() <= 80
         && isValidDateISO(data.dataOperacional)
         && data.abertoEm is string
         && data.abertoEm.size() >= 10
@@ -178,101 +283,174 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
-    // --- Collection: Beverages ---
-    match /users/{userId}/beverages/{beverageId} {
-      allow get: if isOwner(userId)
-        && isValidId(userId)
-        && isValidId(beverageId)
-        && existing().ownerId == request.auth.uid;
+    // --- Collection: Authorized Team Roster (PII Isolated) ---
+    match /workspaces/{workspaceId}/members/{memberEmail} {
+      // Users can check their own membership doc; admins can read any member doc
+      allow get: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidEmailId(memberEmail)
+        && (resource == null || existing().workspaceId == workspaceId)
+        && (
+          authEmail() == memberEmail
+          || isWorkspaceAdmin(workspaceId)
+        );
 
-      allow list: if isOwner(userId)
-        && existing().ownerId == request.auth.uid;
+      // Only workspace admins can list the team roster
+      allow list: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && existing().workspaceId == workspaceId
+        && isWorkspaceAdmin(workspaceId);
 
-      allow create: if isOwner(userId)
-        && isValidId(userId)
-        && isValidId(beverageId)
-        && isValidBeverage(incoming(), userId)
+      allow create: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidEmailId(memberEmail)
+        && isValidTeamMember(incoming(), workspaceId, memberEmail)
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && isWorkspaceAdmin(workspaceId);
 
-      allow update: if isOwner(userId)
-        && isValidId(userId)
+      allow update: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidEmailId(memberEmail)
+        && memberEmail != 'skalee.razarth@gmail.com'
+        && isValidTeamMember(incoming(), workspaceId, memberEmail)
+        && existing().workspaceId == workspaceId
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'role', 'addedByUid', 'updatedAt'])
+        && isWorkspaceAdmin(workspaceId);
+
+      allow delete: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidEmailId(memberEmail)
+        && memberEmail != 'skalee.razarth@gmail.com'
+        && existing().workspaceId == workspaceId
+        && isWorkspaceAdmin(workspaceId);
+    }
+
+    // --- Collection: Shared Beverages ---
+    match /workspaces/{workspaceId}/beverages/{beverageId} {
+      allow get: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && isValidId(beverageId)
-        && isValidBeverage(incoming(), userId)
-        && existing().ownerId == request.auth.uid
-        && incoming().ownerId == existing().ownerId
+        && existing().workspaceId == workspaceId
+        && isTeamMember(workspaceId);
+
+      allow list: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && existing().workspaceId == workspaceId
+        && isTeamMember(workspaceId);
+
+      allow create: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidId(beverageId)
+        && isValidBeverage(incoming(), workspaceId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isTeamMember(workspaceId);
+
+      allow update: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && isValidId(beverageId)
+        && isValidBeverage(incoming(), workspaceId)
+        && existing().workspaceId == workspaceId
+        && incoming().workspaceId == existing().workspaceId
+        && incoming().createdByUid == existing().createdByUid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
+          isWorkspaceAdmin(workspaceId) ||
           // Action: Edit beverage metadata
-          incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'categoria', 'ideal', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'nome', 'categoria', 'ideal', 'updatedByUid', 'updatedByName', 'updatedAt'
+          ]) ||
           // Action: Update stock count / checklist state
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'inicial', 'final', 'ideal', 'checkedInicial', 'checkedFinal', 'updatedAt'
+            'inicial', 'final', 'ideal', 'checkedInicial', 'checkedFinal', 'updatedByUid', 'updatedByName', 'updatedAt'
           ])
-        );
+        )
+        && isTeamMember(workspaceId);
 
-      allow delete: if isOwner(userId)
-        && isValidId(userId)
+      allow delete: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && isValidId(beverageId)
-        && existing().ownerId == request.auth.uid;
+        && existing().workspaceId == workspaceId
+        && isTeamMember(workspaceId);
     }
 
-    // --- Collection: Current Shift Metadata ---
-    match /users/{userId}/meta/{metaId} {
-      allow get: if isOwner(userId)
-        && isValidId(userId)
+    // --- Collection: Shared Current Shift Metadata ---
+    match /workspaces/{workspaceId}/meta/{metaId} {
+      allow get: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && metaId == 'currentShift'
-        && (resource == null || existing().ownerId == request.auth.uid);
+        && (resource == null || existing().workspaceId == workspaceId)
+        && isTeamMember(workspaceId);
 
       allow list: if false;
 
-      allow create: if isOwner(userId)
-        && isValidId(userId)
+      allow create: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && metaId == 'currentShift'
-        && isValidShiftMeta(incoming(), userId)
+        && isValidShiftMeta(incoming(), workspaceId)
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && incoming().updatedAt == request.time
+        && isTeamMember(workspaceId);
 
-      allow update: if isOwner(userId)
-        && isValidId(userId)
+      allow update: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && metaId == 'currentShift'
-        && isValidShiftMeta(incoming(), userId)
-        && existing().ownerId == request.auth.uid
-        && incoming().ownerId == existing().ownerId
+        && isValidShiftMeta(incoming(), workspaceId)
+        && existing().workspaceId == workspaceId
+        && incoming().workspaceId == existing().workspaceId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action: Change operational shift date or roll over to next shift
-          incoming().diff(existing()).affectedKeys().hasOnly(['dataOperacional', 'updatedAt']) ||
-          incoming().diff(existing()).affectedKeys().hasOnly(['dataOperacional', 'abertoEm', 'updatedAt'])
-        );
+          isWorkspaceAdmin(workspaceId) ||
+          // Action: Change operational shift date
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'dataOperacional', 'updatedByUid', 'updatedByName', 'updatedAt'
+          ]) ||
+          // Action: Roll over to next shift
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'dataOperacional', 'abertoEm', 'updatedByUid', 'updatedByName', 'updatedAt'
+          ])
+        )
+        && isTeamMember(workspaceId);
 
       allow delete: if false;
     }
 
-    // --- Collection: Closed Shift History (Immutable after creation) ---
-    match /users/{userId}/shifts/{shiftId} {
-      allow get: if isOwner(userId)
-        && isValidId(userId)
+    // --- Collection: Shared Closed Shift History (Immutable after creation) ---
+    match /workspaces/{workspaceId}/shifts/{shiftId} {
+      allow get: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && isValidId(shiftId)
-        && existing().ownerId == request.auth.uid;
+        && existing().workspaceId == workspaceId
+        && isTeamMember(workspaceId);
 
-      allow list: if isOwner(userId)
-        && existing().ownerId == request.auth.uid;
+      allow list: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
+        && existing().workspaceId == workspaceId
+        && isTeamMember(workspaceId);
 
-      allow create: if isOwner(userId)
-        && isValidId(userId)
+      allow create: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && isValidId(shiftId)
-        && isValidShiftRecord(incoming(), userId)
-        && incoming().createdAt == request.time;
+        && isValidShiftRecord(incoming(), workspaceId)
+        && incoming().createdAt == request.time
+        && isTeamMember(workspaceId);
 
       allow update: if false;
 
-      allow delete: if isOwner(userId)
-        && isValidId(userId)
+      // Tier 1 Admin only: operators cannot erase historical shift records
+      allow delete: if isVerifiedUser()
+        && isValidWorkspaceId(workspaceId)
         && isValidId(shiftId)
-        && existing().ownerId == request.auth.uid;
+        && existing().workspaceId == workspaceId
+        && isWorkspaceAdmin(workspaceId);
     }
   }
 }

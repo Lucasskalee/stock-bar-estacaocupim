@@ -1,16 +1,98 @@
 {
   "entities": {
-    "Beverage": {
-      "title": "Beverage",
-      "description": "Bebida cadastrada no controle de estoque diário do Stokbar Cupim.",
+    "TeamMember": {
+      "title": "TeamMember",
+      "description": "Membro autorizado da equipe Estação Cupim com papel (admin ou operador) para acesso ao estoque compartilhado.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
-          "description": "UID do usuário autenticado dono do estoque.",
+          "description": "Identificador do espaço compartilhado (estacao-cupim).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "E-mail normalizado em minúsculas do membro autorizado.",
+          "minLength": 5,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$"
+        },
+        "nome": {
+          "type": "string",
+          "description": "Nome do colaborador ou função (ex.: João · Barman).",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "description": "Nível de permissão do colaborador no estoque compartilhado.",
+          "enum": [
+            "admin",
+            "operador"
+          ]
+        },
+        "addedByUid": {
+          "type": "string",
+          "description": "UID do administrador que adicionou ou atualizou o membro.",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na inclusão do membro."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na última atualização."
+        }
+      },
+      "required": [
+        "workspaceId",
+        "email",
+        "nome",
+        "role",
+        "addedByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Beverage": {
+      "title": "Beverage",
+      "description": "Bebida cadastrada no controle de estoque diário compartilhado do Stokbar Cupim.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "Identificador do espaço compartilhado (estacao-cupim).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdByUid": {
+          "type": "string",
+          "description": "UID imutável do colaborador que cadastrou a bebida.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "UID do último colaborador que atualizou o registro.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedByName": {
+          "type": "string",
+          "description": "Nome exibido do último colaborador que atualizou o item.",
+          "minLength": 1,
+          "maxLength": 80
         },
         "nome": {
           "type": "string",
@@ -63,7 +145,10 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
+        "createdByUid",
+        "updatedByUid",
+        "updatedByName",
         "nome",
         "categoria",
         "inicial",
@@ -77,14 +162,14 @@
     },
     "ShiftMeta": {
       "title": "ShiftMeta",
-      "description": "Metadados do turno operacional em andamento (data de abertura mesmo após 00:00).",
+      "description": "Metadados do turno operacional compartilhado em andamento (data de abertura mesmo após 00:00).",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
-          "description": "UID do usuário autenticado dono do turno.",
+          "description": "Identificador do espaço compartilhado (estacao-cupim).",
           "minLength": 1,
-          "maxLength": 128,
+          "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
         "dataOperacional": {
@@ -101,6 +186,19 @@
           "minLength": 10,
           "maxLength": 40
         },
+        "updatedByUid": {
+          "type": "string",
+          "description": "UID do último colaborador que alterou o turno.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedByName": {
+          "type": "string",
+          "description": "Nome do colaborador que alterou o turno.",
+          "minLength": 1,
+          "maxLength": 80
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -113,24 +211,39 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
         "dataOperacional",
         "abertoEm",
+        "updatedByUid",
+        "updatedByName",
         "createdAt",
         "updatedAt"
       ]
     },
     "ShiftRecord": {
       "title": "ShiftRecord",
-      "description": "Registro imutável de um turno encerrado para histórico e gráficos de consumo.",
+      "description": "Registro imutável de um turno encerrado para histórico compartilhado e gráficos de consumo.",
       "type": "object",
       "properties": {
-        "ownerId": {
+        "workspaceId": {
           "type": "string",
-          "description": "UID do usuário autenticado dono do registro.",
+          "description": "Identificador do espaço compartilhado (estacao-cupim).",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdByUid": {
+          "type": "string",
+          "description": "UID do colaborador que encerrou o turno.",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "closedByName": {
+          "type": "string",
+          "description": "Nome do colaborador que encerrou o turno.",
+          "minLength": 1,
+          "maxLength": 80
         },
         "dataOperacional": {
           "type": "string",
@@ -190,7 +303,9 @@
         }
       },
       "required": [
-        "ownerId",
+        "workspaceId",
+        "createdByUid",
+        "closedByName",
         "dataOperacional",
         "abertoEm",
         "encerradoEm",
@@ -206,23 +321,29 @@
     }
   },
   "firestore": {
-    "/users/{userId}/beverages/{beverageId}": {
+    "/workspaces/{workspaceId}/members/{memberEmail}": {
+      "schema": {
+        "$ref": "#/entities/TeamMember"
+      },
+      "description": "Equipe autorizada da Estação Cupim (gerenciada apenas por administradores; cada usuário pode consultar apenas o próprio documento)."
+    },
+    "/workspaces/{workspaceId}/beverages/{beverageId}": {
       "schema": {
         "$ref": "#/entities/Beverage"
       },
-      "description": "Coleção de bebidas do estoque ativo pertencentes ao usuário autenticado."
+      "description": "Estoque compartilhado de bebidas acessível em tempo real por todos os membros autorizados da equipe."
     },
-    "/users/{userId}/meta/{metaId}": {
+    "/workspaces/{workspaceId}/meta/{metaId}": {
       "schema": {
         "$ref": "#/entities/ShiftMeta"
       },
-      "description": "Metadados do turno atual (documento currentShift com dataOperacional e abertoEm)."
+      "description": "Metadados do turno operacional compartilhado (documento currentShift)."
     },
-    "/users/{userId}/shifts/{shiftId}": {
+    "/workspaces/{workspaceId}/shifts/{shiftId}": {
       "schema": {
         "$ref": "#/entities/ShiftRecord"
       },
-      "description": "Histórico imutável de turnos encerrados pertencentes ao usuário autenticado."
+      "description": "Histórico imutável compartilhado de turnos encerrados (exclusão restrita a administradores)."
     }
   }
 }
