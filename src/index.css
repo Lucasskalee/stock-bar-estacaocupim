@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-canvas: #0E0D0B;
+  --color-surface: #171512;
+  --color-elevated: #1F1C18;
+  --color-hover: #27231D;
+
+  --color-ivory: #F5F0E8;
+  --color-sand: #A69D8E;
+  --color-stone: #736B5E;
+
+  --color-amber-brand: #D98A2B;
+  --color-amber-bright: #E89B3C;
+  --color-amber-deep: #A66114;
+
+  --color-alert: #E05A47;
+  --color-nominal: #4CA975;
+}
+
+@layer base {
+  html {
+    background-color: #0E0D0B;
+    color: #F5F0E8;
+    font-family: var(--font-sans);
+    letter-spacing: 0.005em;
+  }
+
+  /* Hide native number input spinners for cleaner stepper UI */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* Subtle dark scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0E0D0B;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 244, 224, 0.14);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 244, 224, 0.24);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
+}

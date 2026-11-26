@@ -1,0 +1,6 @@
+{
+  "name": "Stokbar Cupim",
+  "description": "Conferência de estoque de bebidas, fechamento de turnos, pedido sugerido para WhatsApp e relatório PDF A4 da Estação Cupim.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
