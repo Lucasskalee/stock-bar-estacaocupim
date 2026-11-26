@@ -1,0 +1,228 @@
+{
+  "entities": {
+    "Beverage": {
+      "title": "Beverage",
+      "description": "Bebida cadastrada no controle de estoque diário do Stokbar Cupim.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID do usuário autenticado dono do estoque.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nome": {
+          "type": "string",
+          "description": "Nome da bebida (ex.: Heineken 600ml).",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "categoria": {
+          "type": "string",
+          "description": "Categoria da bebida.",
+          "enum": [
+            "Cerveja",
+            "Refrigerante",
+            "Água",
+            "Suco",
+            "Destilado",
+            "Vinho",
+            "Outros"
+          ]
+        },
+        "inicial": {
+          "type": "number",
+          "description": "Quantidade contada na abertura do turno (ou null)."
+        },
+        "final": {
+          "type": "number",
+          "description": "Quantidade contada no fechamento do turno (ou null)."
+        },
+        "ideal": {
+          "type": "number",
+          "description": "Meta de estoque ideal para cálculo de reposição (ou null)."
+        },
+        "checkedInicial": {
+          "type": "boolean",
+          "description": "Indica se o item foi conferido no checklist de abertura."
+        },
+        "checkedFinal": {
+          "type": "boolean",
+          "description": "Indica se o item foi conferido no checklist de fechamento."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na criação do documento."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na última atualização."
+        }
+      },
+      "required": [
+        "ownerId",
+        "nome",
+        "categoria",
+        "inicial",
+        "final",
+        "ideal",
+        "checkedInicial",
+        "checkedFinal",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ShiftMeta": {
+      "title": "ShiftMeta",
+      "description": "Metadados do turno operacional em andamento (data de abertura mesmo após 00:00).",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID do usuário autenticado dono do turno.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dataOperacional": {
+          "type": "string",
+          "description": "Data operacional do turno no formato YYYY-MM-DD.",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "abertoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Instante ISO de abertura do turno.",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na criação."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na última atualização."
+        }
+      },
+      "required": [
+        "ownerId",
+        "dataOperacional",
+        "abertoEm",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ShiftRecord": {
+      "title": "ShiftRecord",
+      "description": "Registro imutável de um turno encerrado para histórico e gráficos de consumo.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID do usuário autenticado dono do registro.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dataOperacional": {
+          "type": "string",
+          "description": "Data operacional do turno encerrado (YYYY-MM-DD).",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "abertoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp ISO de abertura do turno.",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "encerradoEm": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp ISO de fechamento do turno.",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "rotulo": {
+          "type": "string",
+          "description": "Rótulo legível do turno (ex.: Turno 25/11/2026).",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "totalItens": {
+          "type": "number",
+          "description": "Quantidade total de bebidas cadastradas no fechamento."
+        },
+        "itensConferidos": {
+          "type": "number",
+          "description": "Quantidade de bebidas com contagem final preenchida."
+        },
+        "totalConsumo": {
+          "type": "number",
+          "description": "Soma de unidades consumidas no turno."
+        },
+        "totalPedir": {
+          "type": "number",
+          "description": "Soma de unidades sugeridas para pedido."
+        },
+        "consumoPorCategoria": {
+          "type": "object",
+          "description": "Mapa de consumo total por categoria."
+        },
+        "itens": {
+          "type": "array",
+          "description": "Snapshot das bebidas no fechamento do turno (máximo 200 itens)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp do servidor na gravação do histórico."
+        }
+      },
+      "required": [
+        "ownerId",
+        "dataOperacional",
+        "abertoEm",
+        "encerradoEm",
+        "rotulo",
+        "totalItens",
+        "itensConferidos",
+        "totalConsumo",
+        "totalPedir",
+        "consumoPorCategoria",
+        "itens",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/beverages/{beverageId}": {
+      "schema": {
+        "$ref": "#/entities/Beverage"
+      },
+      "description": "Coleção de bebidas do estoque ativo pertencentes ao usuário autenticado."
+    },
+    "/users/{userId}/meta/{metaId}": {
+      "schema": {
+        "$ref": "#/entities/ShiftMeta"
+      },
+      "description": "Metadados do turno atual (documento currentShift com dataOperacional e abertoEm)."
+    },
+    "/users/{userId}/shifts/{shiftId}": {
+      "schema": {
+        "$ref": "#/entities/ShiftRecord"
+      },
+      "description": "Histórico imutável de turnos encerrados pertencentes ao usuário autenticado."
+    }
+  }
+}

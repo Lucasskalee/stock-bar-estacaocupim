@@ -1,0 +1,278 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Hardened Global Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidNullableStock(val) {
+      return val == null || ((val is int || val is float) && val >= 0 && val <= 100000);
+    }
+
+    function isValidCategory(cat) {
+      return cat is string
+        && cat.size() >= 1
+        && cat.size() <= 30
+        && cat in ['Cerveja', 'Refrigerante', 'Água', 'Suco', 'Destilado', 'Vinho', 'Outros'];
+    }
+
+    function isValidDateISO(val) {
+      return val is string && val.size() == 10 && val.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    // --- Validation Blueprints (Anti-Update-Gap) ---
+    function isValidBeverage(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'nome',
+          'categoria',
+          'inicial',
+          'final',
+          'ideal',
+          'checkedInicial',
+          'checkedFinal',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'nome',
+          'categoria',
+          'inicial',
+          'final',
+          'ideal',
+          'checkedInicial',
+          'checkedFinal',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && data.nome is string
+        && data.nome.size() >= 1
+        && data.nome.size() <= 120
+        && isValidCategory(data.categoria)
+        && isValidNullableStock(data.inicial)
+        && isValidNullableStock(data.final)
+        && isValidNullableStock(data.ideal)
+        && data.checkedInicial is bool
+        && data.checkedFinal is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidShiftMeta(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'dataOperacional',
+          'abertoEm',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'dataOperacional',
+          'abertoEm',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidDateISO(data.dataOperacional)
+        && data.abertoEm is string
+        && data.abertoEm.size() >= 10
+        && data.abertoEm.size() <= 40
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidShiftRecord(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'dataOperacional',
+          'abertoEm',
+          'encerradoEm',
+          'rotulo',
+          'totalItens',
+          'itensConferidos',
+          'totalConsumo',
+          'totalPedir',
+          'consumoPorCategoria',
+          'itens',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'dataOperacional',
+          'abertoEm',
+          'encerradoEm',
+          'rotulo',
+          'totalItens',
+          'itensConferidos',
+          'totalConsumo',
+          'totalPedir',
+          'consumoPorCategoria',
+          'itens',
+          'createdAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.ownerId == request.auth.uid
+        && isValidDateISO(data.dataOperacional)
+        && data.abertoEm is string
+        && data.abertoEm.size() >= 10
+        && data.abertoEm.size() <= 40
+        && data.encerradoEm is string
+        && data.encerradoEm.size() >= 10
+        && data.encerradoEm.size() <= 40
+        && data.rotulo is string
+        && data.rotulo.size() >= 1
+        && data.rotulo.size() <= 60
+        && (data.totalItens is int || data.totalItens is float)
+        && data.totalItens >= 0 && data.totalItens <= 500
+        && (data.itensConferidos is int || data.itensConferidos is float)
+        && data.itensConferidos >= 0 && data.itensConferidos <= 500
+        && (data.totalConsumo is int || data.totalConsumo is float)
+        && data.totalConsumo >= 0 && data.totalConsumo <= 1000000
+        && (data.totalPedir is int || data.totalPedir is float)
+        && data.totalPedir >= 0 && data.totalPedir <= 1000000
+        && data.consumoPorCategoria is map
+        && data.consumoPorCategoria.keys().hasOnly([
+          'Cerveja', 'Refrigerante', 'Água', 'Suco', 'Destilado', 'Vinho', 'Outros'
+        ])
+        && data.itens is list
+        && data.itens.size() <= 200
+        && (data.itens.size() == 0 || data.itens[0] is map)
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection: Beverages ---
+    match /users/{userId}/beverages/{beverageId} {
+      allow get: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(beverageId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isOwner(userId)
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(beverageId)
+        && isValidBeverage(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(beverageId)
+        && isValidBeverage(incoming(), userId)
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Edit beverage metadata
+          incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'categoria', 'ideal', 'updatedAt']) ||
+          // Action: Update stock count / checklist state
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'inicial', 'final', 'ideal', 'checkedInicial', 'checkedFinal', 'updatedAt'
+          ])
+        );
+
+      allow delete: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(beverageId)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // --- Collection: Current Shift Metadata ---
+    match /users/{userId}/meta/{metaId} {
+      allow get: if isOwner(userId)
+        && isValidId(userId)
+        && metaId == 'currentShift'
+        && (resource == null || existing().ownerId == request.auth.uid);
+
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && metaId == 'currentShift'
+        && isValidShiftMeta(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && metaId == 'currentShift'
+        && isValidShiftMeta(incoming(), userId)
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Change operational shift date or roll over to next shift
+          incoming().diff(existing()).affectedKeys().hasOnly(['dataOperacional', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['dataOperacional', 'abertoEm', 'updatedAt'])
+        );
+
+      allow delete: if false;
+    }
+
+    // --- Collection: Closed Shift History (Immutable after creation) ---
+    match /users/{userId}/shifts/{shiftId} {
+      allow get: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(shiftId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isOwner(userId)
+        && existing().ownerId == request.auth.uid;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(shiftId)
+        && isValidShiftRecord(incoming(), userId)
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+
+      allow delete: if isOwner(userId)
+        && isValidId(userId)
+        && isValidId(shiftId)
+        && existing().ownerId == request.auth.uid;
+    }
+  }
+}

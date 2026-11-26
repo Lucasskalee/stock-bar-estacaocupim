@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -40,6 +40,22 @@ import {
 } from './utils/calculations';
 import { generateInventoryPdf } from './utils/pdfExport';
 import { copyTextToClipboard, formatWhatsAppOrder } from './utils/whatsappFormat';
+import { useFirebaseAuth } from './contexts/AuthContext';
+import {
+  batchResetCountsCloud,
+  batchRolloverShiftCloud,
+  batchSeedBeveragesCloud,
+  createBeverageCloud,
+  deleteBeverageCloud,
+  deleteShiftRecordCloud,
+  migrateLocalToCloudIfEmpty,
+  subscribeBeverages,
+  subscribeShiftHistory,
+  subscribeShiftMeta,
+  updateBeverageCountCloud,
+  updateBeverageMetadataCloud,
+  upsertShiftMetaCloud,
+} from './services/firestoreSync';
 import { BrandMark } from './components/BrandMark';
 import { HomeDashboardView } from './components/HomeDashboardView';
 import { ChecklistView } from './components/ChecklistView';
@@ -49,13 +65,21 @@ import { BeverageModal } from './components/BeverageModal';
 import { ConfirmActionModal, NewShiftModal } from './components/ConfirmDialogs';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
+import { CloudSyncButton } from './components/CloudSyncButton';
 
 export default function App() {
+  const { user, authReady, authError } = useFirebaseAuth();
   const [items, setItems] = useState<BeverageItem[]>(() => loadInventory());
   const [history, setHistory] = useState<ShiftRecord[]>(() => loadHistory());
   const [shiftMeta, setShiftMeta] = useState<CurrentShiftMeta>(() => loadCurrentShiftMeta());
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
   const [checklistStage, setChecklistStage] = useState<ChecklistStage>('final');
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [fatalSyncError, setFatalSyncError] = useState<Error | null>(null);
+
+  // Keep latest local state available for first-time cloud migration without re-running effect
+  const latestLocalRef = useRef({ items, shiftMeta, history });
+  latestLocalRef.current = { items, shiftMeta, history };
 
   // Desktop interactive left sidebar: starts compact on the left, opens on hover or toggle button
   const [sidebarPinned, setSidebarPinned] = useState(false);
@@ -78,6 +102,26 @@ export default function App() {
   const summary = useMemo(() => computeSummary(items), [items]);
   const afterMidnight = isClosingAfterMidnight(shiftMeta.dataOperacional, new Date());
 
+  // Surface fatal Firestore errors to ErrorBoundary cleanly
+  if (fatalSyncError) {
+    throw fatalSyncError;
+  }
+
+  const showToast = useCallback((text: string, tone: ToastMessage['tone'] = 'neutral') => {
+    const id = createId();
+    setToasts((prev) => [...prev.slice(-2), { id, text, tone }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3200);
+  }, []);
+
+  useEffect(() => {
+    if (authError) {
+      showToast(authError, 'alert');
+    }
+  }, [authError, showToast]);
+
+  // Mirror state to localStorage for instant offline PWA reloads
   useEffect(() => {
     saveInventory(items);
   }, [items]);
@@ -90,20 +134,99 @@ export default function App() {
     saveCurrentShiftMeta(shiftMeta);
   }, [shiftMeta]);
 
-  const showToast = useCallback((text: string, tone: ToastMessage['tone'] = 'neutral') => {
-    const id = createId();
-    setToasts((prev) => [...prev.slice(-2), { id, text, tone }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3200);
-  }, []);
+  // Real-time Firestore subscriptions (ONLY attached when auth is ready and user is authenticated)
+  useEffect(() => {
+    if (!authReady || !user) {
+      setCloudSyncing(false);
+      return;
+    }
+
+    let cancelled = false;
+    let unsubBeverages: (() => void) | null = null;
+    let unsubMeta: (() => void) | null = null;
+    let unsubHistory: (() => void) | null = null;
+
+    const uid = user.uid;
+    setCloudSyncing(true);
+
+    const startSync = async () => {
+      try {
+        const snapshot = latestLocalRef.current;
+        const migrated = await migrateLocalToCloudIfEmpty(
+          uid,
+          snapshot.items,
+          snapshot.shiftMeta,
+          snapshot.history
+        );
+        if (cancelled) return;
+
+        if (migrated) {
+          showToast('Estoque local sincronizado com o Firebase.', 'success');
+        }
+
+        unsubBeverages = subscribeBeverages(
+          uid,
+          (cloudItems) => {
+            if (cancelled) return;
+            setItems(cloudItems);
+            setCloudSyncing(false);
+          },
+          (err) => {
+            if (!cancelled) setFatalSyncError(err);
+          }
+        );
+
+        unsubMeta = subscribeShiftMeta(
+          uid,
+          (cloudMeta) => {
+            if (cancelled || !cloudMeta) return;
+            setShiftMeta(cloudMeta);
+          },
+          (err) => {
+            if (!cancelled) setFatalSyncError(err);
+          }
+        );
+
+        unsubHistory = subscribeShiftHistory(
+          uid,
+          (cloudHistory) => {
+            if (cancelled) return;
+            setHistory(cloudHistory);
+          },
+          (err) => {
+            if (!cancelled) setFatalSyncError(err);
+          }
+        );
+      } catch (err) {
+        if (!cancelled && err instanceof Error) {
+          setFatalSyncError(err);
+        }
+      }
+    };
+
+    void startSync();
+
+    return () => {
+      cancelled = true;
+      unsubBeverages?.();
+      unsubMeta?.();
+      unsubHistory?.();
+    };
+  }, [authReady, user, showToast]);
 
   const handleChangeShiftDate = useCallback(
     (nextISO: string) => {
-      setShiftMeta((prev) => ({ ...prev, dataOperacional: nextISO }));
+      const nextMeta: CurrentShiftMeta = { ...shiftMeta, dataOperacional: nextISO };
+      setShiftMeta(nextMeta);
       showToast(`Data do turno definida para ${formatBusinessDateShort(nextISO)}.`, 'neutral');
+
+      if (user) {
+        void upsertShiftMetaCloud(user.uid, nextMeta).catch((err) => {
+          if (err instanceof Error) setFatalSyncError(err);
+        });
+      }
     },
-    [showToast]
+    [shiftMeta, showToast, user]
   );
 
   const handleUpdateField = useCallback(
@@ -120,31 +243,50 @@ export default function App() {
           return { ...item, ideal: value };
         })
       );
+
+      if (user) {
+        const patch =
+          field === 'inicial'
+            ? { inicial: value, checkedInicial: value !== null }
+            : field === 'final'
+              ? { final: value, checkedFinal: value !== null }
+              : { ideal: value };
+        void updateBeverageCountCloud(user.uid, id, patch).catch((err) => {
+          if (err instanceof Error) setFatalSyncError(err);
+        });
+      }
     },
-    []
+    [user]
   );
 
-  const handleToggleCheck = useCallback((id: string, stage: 'inicial' | 'final') => {
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        if (stage === 'inicial') {
-          const nextChecked = !isInitialChecked(item);
-          return {
-            ...item,
-            checkedInicial: nextChecked,
-            inicial: nextChecked && item.inicial === null ? (item.ideal ?? 0) : item.inicial,
-          };
-        }
-        const nextChecked = !isFinalChecked(item);
-        return {
-          ...item,
-          checkedFinal: nextChecked,
-          final: nextChecked && item.final === null ? (item.inicial ?? 0) : item.final,
-        };
-      })
-    );
-  }, []);
+  const handleToggleCheck = useCallback(
+    (id: string, stage: 'inicial' | 'final') => {
+      let cloudPatch: Partial<BeverageItem> | null = null;
+
+      setItems((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          if (stage === 'inicial') {
+            const nextChecked = !isInitialChecked(item);
+            const nextVal = nextChecked && item.inicial === null ? (item.ideal ?? 0) : item.inicial;
+            cloudPatch = { checkedInicial: nextChecked, inicial: nextVal };
+            return { ...item, ...cloudPatch };
+          }
+          const nextChecked = !isFinalChecked(item);
+          const nextVal = nextChecked && item.final === null ? (item.inicial ?? 0) : item.final;
+          cloudPatch = { checkedFinal: nextChecked, final: nextVal };
+          return { ...item, ...cloudPatch };
+        })
+      );
+
+      if (user && cloudPatch) {
+        void updateBeverageCountCloud(user.uid, id, cloudPatch).catch((err) => {
+          if (err instanceof Error) setFatalSyncError(err);
+        });
+      }
+    },
+    [user]
+  );
 
   const handleSaveBeverage = useCallback(
     (payload: {
@@ -155,9 +297,10 @@ export default function App() {
       inicial?: number | null;
     }) => {
       if (payload.id) {
+        const targetId = payload.id;
         setItems((prev) =>
           prev.map((item) =>
-            item.id === payload.id
+            item.id === targetId
               ? {
                   ...item,
                   nome: payload.nome,
@@ -168,6 +311,16 @@ export default function App() {
           )
         );
         showToast(`${payload.nome} atualizado.`, 'success');
+
+        if (user) {
+          void updateBeverageMetadataCloud(user.uid, targetId, {
+            nome: payload.nome,
+            categoria: payload.categoria,
+            ideal: payload.ideal,
+          }).catch((err) => {
+            if (err instanceof Error) setFatalSyncError(err);
+          });
+        }
       } else {
         const initVal = payload.inicial ?? null;
         const newItem: BeverageItem = {
@@ -182,18 +335,31 @@ export default function App() {
         };
         setItems((prev) => [...prev, newItem]);
         showToast(`${payload.nome} cadastrado no estoque.`, 'success');
+
+        if (user) {
+          void createBeverageCloud(user.uid, newItem).catch((err) => {
+            if (err instanceof Error) setFatalSyncError(err);
+          });
+        }
       }
     },
-    [showToast]
+    [showToast, user]
   );
 
   const handleConfirmDeleteItem = useCallback(() => {
     if (!itemToDelete) return;
+    const removedId = itemToDelete.id;
     const removedName = itemToDelete.nome;
-    setItems((prev) => prev.filter((i) => i.id !== itemToDelete.id));
+    setItems((prev) => prev.filter((i) => i.id !== removedId));
     setItemToDelete(null);
     showToast(`${removedName} removido.`, 'neutral');
-  }, [itemToDelete, showToast]);
+
+    if (user) {
+      void deleteBeverageCloud(user.uid, removedId).catch((err) => {
+        if (err instanceof Error) setFatalSyncError(err);
+      });
+    }
+  }, [itemToDelete, showToast, user]);
 
   const handleConfirmNewShift = useCallback(
     ({
@@ -206,11 +372,16 @@ export default function App() {
       nextShiftDate: string;
     }) => {
       const now = new Date();
-      if (saveToHistory && items.length > 0) {
-        const snapshot = buildShiftSnapshot(items, closingDate, now, shiftMeta.abertoEm);
+      const snapshot =
+        saveToHistory && items.length > 0
+          ? buildShiftSnapshot(items, closingDate, now, shiftMeta.abertoEm)
+          : undefined;
+
+      if (snapshot) {
         setHistory((prev) => [snapshot, ...prev].slice(0, 60));
       }
 
+      const currentItemsSnapshot = items;
       setItems((prev) =>
         prev.map((item) => {
           const nextInicial = item.final !== null ? item.final : item.inicial;
@@ -224,23 +395,33 @@ export default function App() {
         })
       );
 
-      setShiftMeta({
+      const nextMeta: CurrentShiftMeta = {
         dataOperacional: nextShiftDate,
         abertoEm: now.toISOString(),
-      });
-
+      };
+      setShiftMeta(nextMeta);
       setNewShiftModalOpen(false);
+
       showToast(
         saveToHistory
           ? `Turno de ${formatBusinessDateShort(closingDate)} salvo. Próximo turno aberto em ${formatBusinessDateShort(nextShiftDate)}.`
           : `Novo turno aberto para ${formatBusinessDateShort(nextShiftDate)}.`,
         'success'
       );
+
+      if (user) {
+        void batchRolloverShiftCloud(user.uid, currentItemsSnapshot, nextMeta, snapshot).catch(
+          (err) => {
+            if (err instanceof Error) setFatalSyncError(err);
+          }
+        );
+      }
     },
-    [items, shiftMeta.abertoEm, showToast]
+    [items, shiftMeta.abertoEm, showToast, user]
   );
 
   const handleConfirmResetCounts = useCallback(() => {
+    const currentSnapshot = items;
     setItems((prev) =>
       prev.map((item) => ({
         ...item,
@@ -251,12 +432,25 @@ export default function App() {
       }))
     );
     showToast('Contagens inicial e final zeradas.', 'neutral');
-  }, [showToast]);
+
+    if (user) {
+      void batchResetCountsCloud(user.uid, currentSnapshot).catch((err) => {
+        if (err instanceof Error) setFatalSyncError(err);
+      });
+    }
+  }, [items, showToast, user]);
 
   const handleLoadStarter = useCallback(() => {
-    setItems(createStarterBeverages());
+    const starter = createStarterBeverages();
+    setItems(starter);
     showToast('Cardápio exemplo da Estação Cupim carregado.', 'success');
-  }, [showToast]);
+
+    if (user) {
+      void batchSeedBeveragesCloud(user.uid, starter).catch((err) => {
+        if (err instanceof Error) setFatalSyncError(err);
+      });
+    }
+  }, [showToast, user]);
 
   const handleCopyWhatsApp = useCallback(async () => {
     const text = formatWhatsAppOrder(items, shiftMeta.dataOperacional);
@@ -313,10 +507,17 @@ export default function App() {
 
   const handleConfirmDeleteShift = useCallback(() => {
     if (!shiftToDeleteId) return;
-    setHistory((prev) => prev.filter((r) => r.id !== shiftToDeleteId));
+    const targetId = shiftToDeleteId;
+    setHistory((prev) => prev.filter((r) => r.id !== targetId));
     setShiftToDeleteId(null);
     showToast('Registro de turno removido do histórico.', 'neutral');
-  }, [shiftToDeleteId, showToast]);
+
+    if (user) {
+      void deleteShiftRecordCloud(user.uid, targetId).catch((err) => {
+        if (err instanceof Error) setFatalSyncError(err);
+      });
+    }
+  }, [shiftToDeleteId, showToast, user]);
 
   const handleGoToChecklist = useCallback((stage: ChecklistStage) => {
     setChecklistStage(stage);
@@ -378,7 +579,6 @@ export default function App() {
 
         {/* Navigation Items + Primary Add Button */}
         <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
-          {/* Primary + Cadastrar Nova Bebida */}
           <button
             type="button"
             onClick={openAddBeverage}
@@ -441,8 +641,16 @@ export default function App() {
           })}
         </nav>
 
-        {/* Bottom Utility Actions & Expand/Collapse Toggle */}
-        <div className="p-3 border-t border-[#FFF4E0]/8 space-y-1">
+        {/* Bottom Utility Actions, Cloud Auth, PWA Install & Expand/Collapse Toggle */}
+        <div className="p-3 border-t border-[#FFF4E0]/8 space-y-1.5">
+          <CloudSyncButton
+            variant="sidebar"
+            sidebarExpanded={sidebarExpanded}
+            syncing={cloudSyncing}
+            onSignedIn={() => showToast('Conectado ao Firebase em tempo real!', 'success')}
+            onSignedOut={() => showToast('Sessão encerrada. Continuando em modo local.', 'neutral')}
+          />
+
           <PWAInstallButton
             variant="sidebar"
             sidebarExpanded={sidebarExpanded}
@@ -512,17 +720,23 @@ export default function App() {
         </div>
       </aside>
 
-      {/* MOBILE COMPACT TOP HEADER (larger borderless logo + PDF button) */}
-      <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between gap-3 bg-[#141210]/95 backdrop-blur-md border-b border-[#FFF4E0]/8">
+      {/* MOBILE COMPACT TOP HEADER */}
+      <header className="lg:hidden sticky top-0 z-30 h-14 px-4 flex items-center justify-between gap-2 bg-[#141210]/95 backdrop-blur-md border-b border-[#FFF4E0]/8">
         <button
           type="button"
           onClick={() => setActiveTab('home')}
-          className="text-left focus-visible:outline-none cursor-pointer"
+          className="text-left focus-visible:outline-none cursor-pointer min-w-0"
         >
           <BrandMark variant="header" />
         </button>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          <CloudSyncButton
+            variant="header"
+            syncing={cloudSyncing}
+            onSignedIn={() => showToast('Conectado ao Firebase em tempo real!', 'success')}
+            onSignedOut={() => showToast('Sessão encerrada. Continuando em modo local.', 'neutral')}
+          />
           <PWAInstallButton
             variant="header"
             onInstalled={() => showToast('Stokbar Cupim instalado no dispositivo!', 'success')}
@@ -531,7 +745,7 @@ export default function App() {
             type="button"
             onClick={handleExportCurrentPdf}
             disabled={isExportingPdf}
-            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[#1F1C18] hover:bg-[#27231D] border border-[#FFF4E0]/10 text-[#F5F0E8] text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 h-9 px-2.5 rounded-lg bg-[#1F1C18] hover:bg-[#27231D] border border-[#FFF4E0]/10 text-[#F5F0E8] text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
           >
             <FileDown className="w-3.5 h-3.5 text-[#D98A2B]" />
             <span>PDF</span>
@@ -577,6 +791,7 @@ export default function App() {
             <p className="text-xs text-[#A69D8E] mt-1">
               Turno de {formatBusinessDateShort(shiftMeta.dataOperacional)}
               {afterMidnight ? ' · fechamento após 00:00' : ''}
+              {user ? ' · Sincronizado no Firebase' : ''}
             </p>
           </div>
 
@@ -767,7 +982,7 @@ export default function App() {
       <ConfirmActionModal
         isOpen={shiftToDeleteId !== null}
         title="Excluir registro de turno?"
-        description="Este fechamento será removido permanentemente do histórico local."
+        description="Este fechamento será removido permanentemente do histórico."
         confirmLabel="Excluir"
         destructive
         onClose={() => setShiftToDeleteId(null)}
@@ -780,7 +995,7 @@ export default function App() {
       {toasts.length > 0 && (
         <div
           aria-live="polite"
-          className="fixed bottom-20 lg:bottom-6 right-4 left-4 sm:left-auto z-50 flex flex-col gap-2 items-end pointer-events-none"
+          className="fixed bottom-22 lg:bottom-6 right-4 left-4 sm:left-auto z-50 flex flex-col gap-2 items-end pointer-events-none"
         >
           {toasts.map((toast) => (
             <div
